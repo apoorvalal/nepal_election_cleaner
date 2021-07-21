@@ -26,9 +26,8 @@ cn = c("district", "district_code", "vdc", "vdc_code", "post", "ward",
   "last_name", "party", "age", "gender", "votes", "vote_percent", "elected",
   "n_votes_reg", "n_votes_cast")
 
-# %%
-# function to slice vdc file
-vdc_result = function(path){
+# %% functions to slice vdc file
+vdcResult90s = function(path){
   df = readxl::read_excel(path) %>% setDT %>% remove_empty("rows")
   # first 2 cols are aggregates
   sumtab = df[1, 1:2]
@@ -38,9 +37,10 @@ vdc_result = function(path){
   return(df)
 }
 
-# function to ingest all VDC results for a district, add voter count and cast
+
+# %% function to ingest all VDC results for a district, add voter count and cast
 # columns, and stack
-dist_stack = function(distpath, colNames = cn){
+dist_stack = function(distpath, vdcReader = vdcResult90s, colNames = cn, wide = T){
   # list all vdc files (avoid conflicted copy nonsense)
   vdc_files = list.files(distpath, full.names = TRUE, pattern = "VDC_[0-9][0-9].xlsx")
   if (length(vdc_files) == 0){
@@ -49,12 +49,12 @@ dist_stack = function(distpath, colNames = cn){
   }
   else{
     # apply vdc reader to all village excel sheets
-    vdcdfs = map(vdc_files, vdc_result)
+    vdcdfs = map(vdc_files, vdcReader)
     names(vdcdfs) = vdc_files
     # stack, keep file name
     vdc_stacked = rbindlist(vdcdfs, use.names = T, fill=TRUE, idcol = T)
-    # some districts have extra rubbo columns - handle separately
-    setnames(vdc_stacked, names(vdc_stacked)[1:16], c('filename', colNames))
+    setnames(vdc_stacked, names(vdc_stacked)[1:(length(colNames) +1)],
+        c('filename', colNames))
     return(vdc_stacked)
   }
 }
@@ -132,6 +132,9 @@ dist_results = future_map(dirs, dist_stack)
 toc()
 
 # %%
+lapply(dist_results, dim)
+
+# %%
 dist_results = Filter(Negate(is.null), dist_results)
 # %% minor fixes
 dist_results[[19]][!is.na(x79), vdc := x79][, x79 := NULL]
@@ -159,10 +162,10 @@ vdc_97[is.na(post), unique(filename)] %>% print
 # %%
 vdc_97 = vdc_97[!is.na(post)]
 # %% # post names cleanup
-vdc_97[post == "Mayor",        post := "Chairman"]
-vdc_97[post == "Mayoyr",        post := "Chairman"]
-vdc_97[post == "Members",      post := "Member"]
-vdc_97[post == "Deputy Mayor", post := "Vice Chairman"]
+vdc_97[post == "Mayor",          post := "Chairman"]
+vdc_97[post == "Mayoyr",         post := "Chairman"]
+vdc_97[post == "Members",        post := "Member"]
+vdc_97[post == "Deputy Mayor",   post := "Vice Chairman"]
 vdc_97[grepl("[vV]ice.*[Cc]h.*", post )] %>% tabyl(post)
 vdc_97[grepl("[vV]ice.*[Cc]h.*", post ), post := "Vice Chairman"]
 # %% write
@@ -181,8 +184,87 @@ fwrite(vdc_97, file.path(root, "Electoral_Clean/VDC_1997_all.csv"))
 # %%
 dirs = list.dirs(elec_81, full.names = TRUE, recursive = F) %>% str_subset("District.*") %>% sort
 dirs %>% head %>% print
+# %%
+vdcResult80s = function(path, lastcol){
+  df = readxl::read_excel(path) %>% setDT %>% remove_empty("rows")
+  # first 2 cols are aggregates
+  sumtab = df[1:3, 1:2]
+  df = df[, 3:lastcol] %>% clean_names
+  df[, eval(parse(text = glue("n_votes_reg     := {as.numeric(names(sumtab)[2])}")))]
+  df[, eval(parse(text = glue("n_votes_cast    := {as.numeric(sumtab[[2]][1] )}")))]
+  df[, eval(parse(text = glue("n_valid_votes   := {as.numeric(sumtab[[2]][2] )}")))]
+  df[, eval(parse(text = glue("n_invalid_votes := {as.numeric(sumtab[[2]][3] )}")))]
+  return(df)
+}
 
 # %%
+vdcResult81 = function(path) vdcResult80s(path, lastcol = 11)
+cn = c( 'district', 'district_code', 'vdc', 'vdc_code', 'post', 'ward',
+  'last_name', 'vote', 'elected', 'n_votes_reg', 'n_votes_cast')
 tic()
-dist_results = future_map(dirs, dist_stack)
+dist_results = future_map(dirs, dist_stack, vdcReader = vdcResult80s, colNames = cn)
 toc()
+# throw out empties
+dist_results = Filter(Negate(is.null), dist_results)
+# %% stack
+vdc_81   = rbindlist(dist_results)
+vdc_81[, vote := as.numeric(vote)]
+# these are vdcs without elections
+# vdc_81[is.na(vote)]
+vdc_81 = vdc_81[!is.na(vote)]
+
+# %% check empty post values
+vdc_81$post %>% tabyl
+
+# %% # post names cleanup
+vdc_81[post == "Mayor",          post := "Chairman"]
+vdc_81[post == "Members",        post := "Member"]
+vdc_81[post == "Deputy Mayor",   post := "Vice Chairman"]
+vdc_81[grepl("[vV]ice.*[Cc]h.*", post ), post := "Vice Chairman"]
+# %% write
+fwrite(vdc_81, file.path(root, "Electoral_Clean/VDC_1981_all.csv"))
+
+# %%
+
+ #######  ########
+##     ## ##    ##
+##     ##     ##
+ #######     ##
+##     ##   ##
+##     ##   ##
+ #######    ##
+
+dirs = list.dirs(elec_86, full.names = TRUE, recursive = F) %>% str_subset("District.*") %>% sort
+dirs %>% head %>% print
+
+# %%
+vdcResult87 = function(path) vdcResult80s(path, lastcol = 13)
+cn = c( 'district', 'district_code', 'vdc', 'vdc_code', 'post', 'ward',
+  'last_name', 'age', 'sex', 'vote', 'elected', 'n_votes_reg', 'n_votes_cast')
+
+tic()
+dist_results = future_map(dirs, dist_stack, vdcReader = vdcResult87, colNames = cn)
+toc()
+# throw out empties
+dist_results = Filter(Negate(is.null), dist_results)
+# %% stack
+vdc_86   = rbindlist(dist_results, fill=TRUE) %>% clean_names
+vdc_86[!is.na(elected_2), elected := elected_2][, elected_2 := NULL]
+vdc_86[, vote := as.numeric(vote)]
+vdc_86 %>% glimpse
+
+# %%
+vdc_86$post %>% tabyl
+
+# %%
+vdc_86 = vdc_86[!is.na(post)]
+
+# %% # post names cleanup
+vdc_86[post == "Mayor",          post := "Chairman"]
+vdc_86[post == "Members",        post := "Member"]
+vdc_86[post == "Deputy Mayor",   post := "Vice Chairman"]
+vdc_86[grepl("[vV]ice.*[Cc]h.*", post ), post := "Vice Chairman"]
+# %% write
+fwrite(vdc_86, file.path(root, "Electoral_Clean/VDC_1986_all.csv"))
+
+# %%
